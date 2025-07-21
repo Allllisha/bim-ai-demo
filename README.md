@@ -23,6 +23,7 @@
 - Cypherクエリ自動生成
 - 専門的な建築知識による回答
 - 日本語・英語対応
+- GPT-4oとClaude APIの動的切り替え
 
 ### 📊 建物分析ダッシュボード
 - 建物構成要素の統計表示
@@ -33,6 +34,14 @@
 - ドラッグリサイズ可能なパネル
 - レスポンシブデザイン
 - プロフェッショナルなUI/UX
+- 設定ダイアログでLLMプロバイダー切り替え
+- "Powered by AICE"ブランディング
+
+### 🎯 ビジュアルコマンド機能
+- 自然言語による3Dモデル操作
+- 色変更、表示/非表示、ハイライト、透過設定
+- カメラアングル制御
+- 階層・要素別の表示制御
 
 ## 技術スタック
 
@@ -49,6 +58,7 @@
 - **ifcopenshell** - IFCファイル解析
 - **Neo4j** - グラフデータベース
 - **Anthropic Claude API** - 大規模言語モデル
+- **OpenAI GPT-4o** - 大規模言語モデル（オプション）
 
 ### インフラ
 - **Docker** & **Docker Compose** - コンテナ化
@@ -87,6 +97,7 @@
 # .env ファイルを作成
 CLAUDE_API_KEY=your_anthropic_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
+OPENAI_API_KEY=your_openai_api_key  # オプション
 NEO4J_URI=bolt://neo4j:7687
 NEO4J_AUTH=neo4j/password123
 REACT_APP_API_URL=http://localhost:8001
@@ -146,6 +157,14 @@ http://localhost:3000
 - "設計改善の提案をください"
 - "コスト分析をお願いします"
 
+**ビジュアルコマンド例:**
+- "壁を赤色にして"
+- "窓を隠して"
+- "ドアだけ表示して"
+- "2階だけ表示"
+- "建物全体を半透明にして"
+- "カメラを正面から見て"
+
 ## データ処理の詳細
 
 ### IFC要素の抽出
@@ -204,15 +223,19 @@ archi_demo/
 │   │   │   ├── IfcViewer.tsx
 │   │   │   ├── ChatInterface.tsx
 │   │   │   ├── BuildingInfo.tsx
-│   │   │   └── ResizablePanels.tsx
+│   │   │   ├── ResizablePanels.tsx
+│   │   │   └── Settings.tsx
 │   │   ├── App.tsx
 │   │   └── theme.ts
-│   └── package.json
+│   ├── package.json
+│   ├── Dockerfile.prod       # プロダクション用Dockerfile
+│   └── nginx.conf           # Nginx設定
 ├── backend/                   # FastAPI バックエンド
 │   ├── main.py               # APIエンドポイント
 │   ├── ifc_parser.py         # IFC解析エンジン
 │   ├── neo4j_service.py      # Neo4j データベース操作
 │   ├── claude_service.py     # Claude AI サービス
+│   ├── visual_commands.py    # ビジュアルコマンド処理
 │   └── requirements.txt
 ├── data/
 │   └── uploads/              # アップロードファイル保存
@@ -276,6 +299,29 @@ AI建築コンサルタントへの質問
     "doors": {"count": 18},
     "materials": {"count": 13, "names": [...]}
   }
+}
+```
+
+### GET /geometry/{session_id}
+3Dジオメトリデータの取得
+
+### GET /llm-provider
+現在のLLMプロバイダー取得
+
+**Response:**
+```json
+{
+  "provider": "anthropic" | "openai"
+}
+```
+
+### POST /llm-provider
+LLMプロバイダーの切り替え
+
+**Request:**
+```json
+{
+  "provider": "anthropic" | "openai"
 }
 ```
 
@@ -357,6 +403,8 @@ docker-compose logs backend | grep -E "(ERROR|Error|error)"
 - 建築専門知識による回答生成
 - 会話履歴の考慮
 - エラー時のフォールバック機能
+- ビジュアルコマンドの自動生成
+- GPT-4oとClaude APIの動的切り替え
 
 ## ライセンス
 
@@ -370,5 +418,5 @@ docker-compose logs backend | grep -E "(ERROR|Error|error)"
 ---
 
 **最終更新:** 2025年7月21日  
-**バージョン:** 1.0.0  
+**バージョン:** 1.1.0  
 **デモ予定:** 2025年7月22日 10:00 鹿島建設向け
