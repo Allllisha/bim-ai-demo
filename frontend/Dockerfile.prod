@@ -9,6 +9,9 @@ RUN npm install --legacy-peer-deps
 
 COPY . .
 
+# Set production API URL
+ENV REACT_APP_API_URL=https://archi-demo-backend.azurewebsites.net
+
 # Build the React app for production
 RUN npm run build
 

@@ -1,0 +1,52 @@
+apiVersion: '2021-10-01'
+location: japaneast
+name: archi-demo-containers
+properties:
+  containers:
+  - name: neo4j
+    properties:
+      image: meijichatbotrag.azurecr.io/archi_demo/neo4j:latest
+      ports:
+      - port: 7474
+        protocol: TCP
+      - port: 7687
+        protocol: TCP
+      resources:
+        requests:
+          cpu: 1.0
+          memoryInGB: 2.0
+      environmentVariables:
+      - name: NEO4J_AUTH
+        value: neo4j/password123
+      - name: NEO4J_PLUGINS
+        value: '["apoc"]'
+      volumeMounts:
+      - name: neo4j-data
+        mountPath: /data
+      - name: neo4j-logs
+        mountPath: /logs
+  imageRegistryCredentials:
+  - server: meijichatbotrag.azurecr.io
+    username: <ACR_USERNAME>
+    password: <ACR_PASSWORD>
+  ipAddress:
+    ports:
+    - port: 7474
+      protocol: TCP
+    - port: 7687
+      protocol: TCP
+    type: Public
+    dnsNameLabel: archi-demo-neo4j
+  osType: Linux
+  volumes:
+  - name: neo4j-data
+    azureFile:
+      shareName: neo4j-data
+      storageAccountName: <STORAGE_ACCOUNT_NAME>
+      storageAccountKey: <STORAGE_ACCOUNT_KEY>
+  - name: neo4j-logs
+    azureFile:
+      shareName: neo4j-logs
+      storageAccountName: <STORAGE_ACCOUNT_NAME>
+      storageAccountKey: <STORAGE_ACCOUNT_KEY>
+type: Microsoft.ContainerInstance/containerGroups
