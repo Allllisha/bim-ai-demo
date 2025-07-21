@@ -1,0 +1,9 @@
+fastapi==0.109.0
+uvicorn[standard]==0.25.0
+python-multipart==0.0.6
+neo4j==5.16.0
+ifcopenshell
+anthropic
+pydantic==2.5.3
+python-dotenv==1.0.0
+aiofiles==23.2.1

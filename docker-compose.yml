@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      - NEO4J_AUTH=neo4j/password123
+      - NEO4J_PLUGINS=["apoc"]
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - bim-network
+
+  backend:
+    build: ./backend
+    ports:
+      - "8001:8001"
+    environment:
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_AUTH=neo4j/password123
+    depends_on:
+      - neo4j
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    networks:
+      - bim-network
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8001
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - bim-network
+    stdin_open: true
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+
+networks:
+  bim-network:
+    driver: bridge

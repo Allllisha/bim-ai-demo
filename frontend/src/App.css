@@ -1,0 +1,7 @@
+.App {
+  text-align: center;
+}
+
+.MuiContainer-root {
+  height: calc(100% - 64px);
+}
