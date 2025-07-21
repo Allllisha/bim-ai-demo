@@ -79,6 +79,12 @@ def parse_ifc_to_neo4j(file_path: str, session_id: str, neo4j_service):
     for building in buildings:
         building_data = extract_element_data(building)
         building_data["session_id"] = session_id
+        # Replace placeholder building name
+        if building_data["name"] == "// BUILDING/NAME //":
+            building_data["name"] = "Large Building"
+        # Add description if empty
+        if not building_data["description"] or building_data["description"] == "":
+            building_data["description"] = "2階建て多目的施設 - BIMデモ用サンプル建築物"
         neo4j_service.execute_query(
             """
             CREATE (b:IfcBuilding {
@@ -345,9 +351,64 @@ def parse_ifc_to_neo4j(file_path: str, session_id: str, neo4j_service):
                     )
     
     logger.info(f"Total furniture elements processed: {furniture_count}")
+    
+    # Parse materials and material associations - MOVED TO END TO ENSURE ALL ELEMENTS EXIST
+    logger.info(f"Starting material processing for session {session_id}")
+    try:
+        parse_materials(ifc_file, session_id, neo4j_service)
+        logger.info(f"Completed material processing for session {session_id}")
+    except Exception as e:
+        logger.error(f"Material processing failed for session {session_id}: {e}")
+        import traceback
+        traceback.print_exc()
+    
     logger.info(f"Successfully parsed IFC file for session {session_id}")
     
     return geometry_data
+
+
+def parse_materials(ifc_file, session_id: str, neo4j_service):
+    """Parse material information from IFC file"""
+    logger.info(f"Starting material extraction for session {session_id}")
+    
+    try:
+        # Create all material nodes
+        materials = ifc_file.by_type("IfcMaterial")
+        logger.info(f"Found {len(materials)} IfcMaterial entities in the IFC file")
+        
+        created_materials = []
+        for material in materials:
+            material_name = material.Name or ""
+            if material_name:  # Only process materials with names
+                material_data = {
+                    "name": material_name,
+                    "description": material.Description or "" if hasattr(material, 'Description') else "",
+                    "session_id": session_id
+                }
+                
+                # Create material node
+                neo4j_service.execute_query(
+                    """
+                    CREATE (m:IfcMaterial {
+                        name: $name,
+                        description: $description,
+                        session_id: $session_id
+                    })
+                    """,
+                    material_data
+                )
+                created_materials.append(material_name)
+                logger.info(f"Created material node: {material_name}")
+        
+        logger.info(f"Successfully created {len(created_materials)} material nodes")
+        logger.info(f"Created materials: {created_materials[:10]}{'...' if len(created_materials) > 10 else ''}")
+        
+        
+    
+    except Exception as e:
+        logger.error(f"Error during material extraction: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def extract_element_data(element) -> Dict[str, Any]:

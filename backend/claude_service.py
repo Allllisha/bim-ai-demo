@@ -7,10 +7,166 @@ logger = logging.getLogger(__name__)
 
 class ClaudeService:
     def __init__(self):
-        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("CLAUDE_API_KEY or ANTHROPIC_API_KEY environment variable not set")
-        self.client = Anthropic(api_key=api_key)
+        # Check for force flag first
+        force_openai = os.getenv("_FORCE_OPENAI") == "true"
+        
+        # Check for API keys
+        openai_key = os.getenv("OPENAI_API_KEY")
+        anthropic_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+        
+        # Determine which provider to use
+        if force_openai and openai_key:
+            self.use_openai = True
+            try:
+                from openai import OpenAI
+                self.client = OpenAI(api_key=openai_key)
+                logger.info("Using OpenAI API")
+            except ImportError:
+                raise ImportError("OpenAI library not installed. Please install with: pip install openai")
+        elif not force_openai and anthropic_key:
+            self.use_openai = False
+            self.client = Anthropic(api_key=anthropic_key)
+            logger.info("Using Anthropic Claude API")
+        elif openai_key:
+            self.use_openai = True
+            try:
+                from openai import OpenAI
+                self.client = OpenAI(api_key=openai_key)
+                logger.info("Using OpenAI API")
+            except ImportError:
+                raise ImportError("OpenAI library not installed. Please install with: pip install openai")
+        elif anthropic_key:
+            self.use_openai = False
+            self.client = Anthropic(api_key=anthropic_key)
+            logger.info("Using Anthropic Claude API")
+        else:
+            raise ValueError("No API key found. Please set OPENAI_API_KEY, CLAUDE_API_KEY, or ANTHROPIC_API_KEY")
+    
+    async def parse_visual_command(self, question: str) -> dict:
+        """Parse natural language into visual commands"""
+        
+        system_prompt = """You are a visual command parser for a 3D building viewer. 
+Parse natural language requests into structured visual commands.
+
+Available command types:
+1. color - Change element colors
+2. visibility - Show/hide elements  
+3. highlight - Highlight specific elements
+4. isolate - Show only specific elements
+5. reset - Reset view to default
+6. camera - Change camera view
+7. transparency - Set element transparency
+
+Response format (JSON):
+{
+  "has_command": true/false,
+  "command": {
+    "type": "command_type",
+    "target": {
+      "elementType": "Wall/Window/Door/etc",
+      "elementName": "specific name",
+      "material": "material name",
+      "floor": "floor name/number"
+    },
+    "color": "#hex_color",
+    "action": "show/hide",
+    "opacity": 0-1,
+    "aspect": "all/color/visibility/camera"
+  },
+  "message": "User-friendly response about the action"
+}
+
+Examples:
+- "壁を赤色にして" → color command for walls with red color
+- "窓を隠して" → visibility command to hide windows
+- "2階だけ表示" → isolate command for 2nd floor
+- "ドアを緑にして" → color command for doors with green
+- "建物を上から見て" → camera command with top view
+- "壁を半透明にして" → transparency command for walls
+- "リセットして" → reset command
+
+Important:
+- Return has_command: false if the request is not a visual command
+- Parse colors flexibly (赤/red/#ff0000)
+- Parse element types in both Japanese and English
+- Always include a friendly message explaining what was done"""
+
+        user_prompt = f"""Parse this request: "{question}"
+
+If it's a visual command, return the structured command.
+If not a visual command, return has_command: false.
+
+Response must be valid JSON."""
+
+        try:
+            if self.use_openai:
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    max_tokens=500,
+                    temperature=0,
+                    response_format={ "type": "json_object" },
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                result = response.choices[0].message.content.strip()
+            else:
+                response = self.client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=500,
+                    temperature=0,
+                    system=system_prompt,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                result = response.content[0].text.strip()
+            
+            # Parse JSON response
+            import json
+            parsed = json.loads(result)
+            
+            # Convert Japanese colors to hex if needed
+            if parsed.get("has_command") and parsed.get("command", {}).get("color"):
+                color = parsed["command"]["color"]
+                color_map = {
+                    "赤": "#ff0000",
+                    "緑": "#00ff00", 
+                    "青": "#0000ff",
+                    "黄": "#ffff00",
+                    "白": "#ffffff",
+                    "黒": "#000000",
+                    "灰": "#808080",
+                    "茶": "#8b4513",
+                    "ピンク": "#ffc0cb",
+                    "オレンジ": "#ffa500",
+                    "紫": "#800080",
+                    "red": "#ff0000",
+                    "green": "#00ff00",
+                    "blue": "#0000ff",
+                    "yellow": "#ffff00",
+                    "white": "#ffffff",
+                    "black": "#000000",
+                    "gray": "#808080",
+                    "grey": "#808080",
+                    "brown": "#8b4513",
+                    "pink": "#ffc0cb",
+                    "orange": "#ffa500",
+                    "purple": "#800080"
+                }
+                if color.lower() in color_map:
+                    parsed["command"]["color"] = color_map[color.lower()]
+            
+            logger.info(f"Parsed visual command: {parsed}")
+            return parsed
+            
+        except Exception as e:
+            logger.error(f"Error parsing visual command: {e}")
+            return {
+                "has_command": False,
+                "message": "コマンドの解析に失敗しました"
+            }
     
     async def generate_cypher(self, question: str, session_id: str) -> str:
         """Generate Cypher query from natural language question"""
@@ -30,12 +186,17 @@ The database contains these node types with their properties:
 - IfcColumn: Column elements (guid, name, session_id, description, element_type)
 - IfcBeam: Beam elements (guid, name, session_id, description, element_type)
 - IfcElement: Generic label for all building elements (guid, name, session_id, description, element_type)
+- IfcMaterial: Material nodes (name, description, session_id)
+- IfcMaterialLayerSet: Material layer sets (name, session_id)
 
 The relationships are:
 - (IfcBuilding)-[:CONTAINS_STOREY]->(IfcBuildingStorey)
 - (IfcBuildingStorey)-[:CONTAINS_SPACE]->(IfcSpace)
 - (Any Container)-[:CONTAINS]->(Any Element)
 - (Parent)-[:DECOMPOSES]->(Child)
+- (Any Element)-[:HAS_MATERIAL]->(IfcMaterial)
+- (Any Element)-[:HAS_MATERIAL_LAYER_SET]->(IfcMaterialLayerSet)
+- (IfcMaterialLayerSet)-[:CONTAINS_LAYER {thickness}]->(IfcMaterial)
 
 CRITICAL REQUIREMENTS:
 1. ALL queries MUST include WHERE clause with session_id = $session_id
@@ -108,20 +269,57 @@ EXAMPLES:
   -> MATCH (n:IfcElement) WHERE n.session_id = $session_id RETURN n.element_type as type, count(n) as count ORDER BY count DESC
 
 - "家具の詳細" / "Furniture details"
-  -> MATCH (f:IfcFurnishingElement) WHERE f.session_id = $session_id RETURN f.name as name, f.description as description, f.element_type as type"""
+  -> MATCH (f:IfcFurnishingElement) WHERE f.session_id = $session_id RETURN f.name as name, f.description as description, f.element_type as type
+
+- "材質は？" / "What materials?" / "材料の種類"
+  -> MATCH (m:IfcMaterial) WHERE m.session_id = $session_id RETURN m.name as material_name, count(m) as count
+
+- "コンクリートの要素は？" / "Concrete elements"
+  -> MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND m.name CONTAINS 'Concrete' RETURN e.element_type as element_type, count(e) as count
+
+- "ドアの材質は？" / "Door materials"
+  -> MATCH (d:IfcDoor)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE d.session_id = $session_id RETURN d.name as door_name, m.name as material_name
+
+- "窓の材質は？" / "Window materials" 
+  -> MATCH (w:IfcWindow)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE w.session_id = $session_id RETURN w.name as window_name, m.name as material_name
+
+- "材質別の要素数は？" / "Element count by material"
+  -> MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id RETURN m.name as material_name, count(e) as element_count ORDER BY element_count DESC
+
+- "木製の要素は？" / "Wooden elements" / "木材"
+  -> MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND (m.name CONTAINS 'Wood' OR m.name CONTAINS '木' OR m.name CONTAINS 'Timber') RETURN e.element_type as element_type, count(e) as count
+
+- "金属の要素は？" / "Metal elements" / "鋼材"
+  -> MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND (m.name CONTAINS 'Steel' OR m.name CONTAINS 'Metal' OR m.name CONTAINS '鋼' OR m.name CONTAINS 'Aluminum') RETURN e.element_type as element_type, count(e) as count
+
+- "多層材質は？" / "Layered materials"
+  -> MATCH (mls:IfcMaterialLayerSet) WHERE mls.session_id = $session_id RETURN mls.name as layerset_name"""
 
         try:
-            response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=300,
-                temperature=0,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
-            
-            cypher_query = response.content[0].text.strip()
+            if self.use_openai:
+                # OpenAI API call
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    max_tokens=1000,
+                    temperature=0,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                cypher_query = response.choices[0].message.content.strip()
+            else:
+                # Anthropic Claude API call
+                response = self.client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1000,
+                    temperature=0,
+                    system=system_prompt,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                cypher_query = response.content[0].text.strip()
             
             # Clean up the response - remove any markdown formatting
             if cypher_query.startswith("```"):
@@ -162,6 +360,14 @@ EXAMPLES:
                 return "MATCH (w:IfcWall) WHERE w.session_id = $session_id RETURN count(w) as wall_count"
             elif any(word in question_lower for word in ['柱', 'column']):
                 return "MATCH (c:IfcColumn) WHERE c.session_id = $session_id RETURN count(c) as column_count"
+            elif any(word in question_lower for word in ['材質', '材料', 'material']):
+                return "MATCH (m:IfcMaterial) WHERE m.session_id = $session_id RETURN m.name as material_name"
+            elif any(word in question_lower for word in ['コンクリート', 'concrete']):
+                return "MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND m.name CONTAINS 'Concrete' RETURN e.element_type as element_type, count(e) as count"
+            elif any(word in question_lower for word in ['木', '木材', 'wood', 'timber']):
+                return "MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND (m.name CONTAINS 'Wood' OR m.name CONTAINS '木' OR m.name CONTAINS 'Timber') RETURN e.element_type as element_type, count(e) as count"
+            elif any(word in question_lower for word in ['鋼', '金属', 'steel', 'metal']):
+                return "MATCH (e)-[:HAS_MATERIAL]->(m:IfcMaterial) WHERE e.session_id = $session_id AND (m.name CONTAINS 'Steel' OR m.name CONTAINS 'Metal' OR m.name CONTAINS '鋼' OR m.name CONTAINS 'Aluminum') RETURN e.element_type as element_type, count(e) as count"
             else:
                 return "MATCH (n) WHERE n.session_id = $session_id RETURN labels(n) as type, count(n) as count ORDER BY count DESC"
     
@@ -216,17 +422,30 @@ EXAMPLES:
 例：「2階建てで8つの部屋があって、窓が42個もあるんですね。これだけ窓が多いということは、自然採光を重視した設計思想が見て取れます。省エネルギーの観点からも優秀で、照明コストの削減効果が期待できそうです。ただ、熱負荷の管理が重要になってくるので、断熱性能やブラインドシステムの検討をお勧めします。オフィスビルとしての利用なら、快適な作業環境が実現できると思います」"""
 
         try:
-            response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1000,
-                temperature=0.5,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
-            
-            natural_response = response.content[0].text.strip()
+            if self.use_openai:
+                # OpenAI API call
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    max_tokens=1000,
+                    temperature=0.5,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                natural_response = response.choices[0].message.content.strip()
+            else:
+                # Anthropic Claude API call
+                response = self.client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1000,
+                    temperature=0.5,
+                    system=system_prompt,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                natural_response = response.content[0].text.strip()
             logger.info(f"Generated natural response: {natural_response}")
             return natural_response
             

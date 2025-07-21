@@ -38,7 +38,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
     try {
       const response = await axios.post(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/upload_ifc`,
+        `${process.env.REACT_APP_API_URL || 'http://localhost:8001'}/upload_ifc`,
         formData,
         {
           headers: {
@@ -70,7 +70,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
     if (files.length > 0) {
       handleFileChange(files[0]);
     }
-  }, []);
+  }, [handleFileChange]);
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();

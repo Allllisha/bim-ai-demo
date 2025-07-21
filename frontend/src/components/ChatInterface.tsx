@@ -8,10 +8,10 @@ import {
   Paper,
   Typography,
   CircularProgress,
-  Chip,
-  Divider,
   IconButton,
-  Tooltip
+  Tooltip,
+  Chip,
+  Divider
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -26,9 +26,10 @@ interface Message {
 
 interface ChatInterfaceProps {
   sessionId: string;
+  onViewerCommand?: (command: any) => Promise<boolean>;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onViewerCommand }) => {
   // LocalStorageから会話履歴を復元
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
@@ -117,7 +118,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId }) => {
 
     try {
       const response = await axios.post(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/chat`,
+        `${process.env.REACT_APP_API_URL || 'http://localhost:8001'}/chat`,
         {
           session_id: sessionId,
           question: input,
@@ -133,6 +134,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId }) => {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+
+      // Handle visual command if present
+      if (response.data.visual_command && onViewerCommand) {
+        const success = await onViewerCommand(response.data.visual_command);
+        if (!success) {
+          const errorMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            type: 'assistant',
+            content: 'ビジュアルコマンドの実行に失敗しました。',
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, errorMessage]);
+        }
+      }
     } catch (error) {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -200,45 +215,104 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId }) => {
       
       {/* Sample Questions */}
       {messages.length === 0 && (
-        <Box sx={{ p: 3, bgcolor: 'grey.50' }}>
+        <Box sx={{ 
+          px: 3, 
+          py: 2,
+          bgcolor: 'grey.50',
+          maxHeight: '200px',
+          overflow: 'auto',
+          flexShrink: 0,
+          borderBottom: '1px solid',
+          borderColor: 'grey.200'
+        }}>
           <Typography 
-            variant="overline" 
+            variant="caption" 
             sx={{ 
               color: 'text.secondary',
               fontWeight: 600,
               letterSpacing: '0.1em',
-              mb: 2,
-              display: 'block'
+              display: 'block',
+              mb: 1.5
             }}
           >
-            質問例
+            質問例をクリックして始めましょう
           </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {[
-              'この建物の設計を分析してください',
-              'この建物は何に適していますか？',
-              'エネルギー効率を評価してください',
-              '建築基準法への適合性をチェック',
-              '空間利用の最適化について',
-              'コスト分析をお願いします'
-            ].map((question) => (
-              <Button
-                key={question}
-                variant="text"
-                onClick={() => setInput(question)}
-                sx={{ 
-                  justifyContent: 'flex-start',
-                  textTransform: 'none',
-                  color: 'text.secondary',
-                  '&:hover': {
-                    bgcolor: 'background.paper',
-                    color: 'primary.main'
-                  }
-                }}
-              >
-                {question}
-              </Button>
-            ))}
+          
+          {/* Building Analysis Questions */}
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
+              建物分析・評価
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {[
+                'この建物の設計を分析',
+                '建物の用途は？',
+                'エネルギー効率評価',
+                '法規制チェック',
+                '空間最適化',
+                'コスト分析'
+              ].map((question, index) => (
+                <Chip
+                  key={index}
+                  label={question}
+                  onClick={() => setInput(
+                    index === 0 ? 'この建物の設計を分析してください' :
+                    index === 1 ? 'この建物は何に適していますか？' :
+                    index === 2 ? 'エネルギー効率を評価してください' :
+                    index === 3 ? '建築基準法への適合性をチェック' :
+                    index === 4 ? '空間利用の最適化について' :
+                    'コスト分析をお願いします'
+                  )}
+                  size="small"
+                  sx={{ 
+                    cursor: 'pointer',
+                    '&:hover': {
+                      bgcolor: 'primary.main',
+                      color: 'white'
+                    }
+                  }}
+                />
+              ))}
+            </Box>
+          </Box>
+
+          <Divider sx={{ my: 1.5 }} />
+
+          {/* Visual Commands */}
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
+              ビジュアルコマンド
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {[
+                { label: '壁を赤に', cmd: '壁を赤色にして' },
+                { label: '窓を青に', cmd: '窓を青にして' },
+                { label: 'ドアを緑に', cmd: 'ドアを緑色に変更' },
+                { label: '2階のみ', cmd: '2階だけ表示して' },
+                { label: '窓を隠す', cmd: '窓を隠して' },
+                { label: 'ハイライト', cmd: '壁をハイライトして' },
+                { label: '上から見る', cmd: '建物を上から見て' },
+                { label: '半透明', cmd: '壁を半透明にして' },
+                { label: 'リセット', cmd: 'リセットして' }
+              ].map((item) => (
+                <Chip
+                  key={item.label}
+                  label={item.label}
+                  onClick={() => setInput(item.cmd)}
+                  size="small"
+                  variant="outlined"
+                  sx={{ 
+                    cursor: 'pointer',
+                    borderColor: 'primary.main',
+                    color: 'primary.main',
+                    '&:hover': {
+                      bgcolor: 'primary.main',
+                      color: 'white'
+                    }
+                  }}
+                />
+              ))}
+            </Box>
           </Box>
         </Box>
       )}

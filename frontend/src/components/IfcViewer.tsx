@@ -1,11 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { Box, Typography, CircularProgress } from '@mui/material';
 import axios from 'axios';
+import { ViewerCommand } from '../types/ViewerCommand';
 
 interface IfcViewerProps {
   file: File;
+  onCommandComplete?: (success: boolean, message?: string) => void;
+}
+
+export interface IfcViewerRef {
+  executeCommand: (command: ViewerCommand) => Promise<boolean>;
 }
 
 interface GeometryData {
@@ -16,7 +22,7 @@ interface GeometryData {
   indices: number[];
 }
 
-const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
+const IfcViewer = forwardRef<IfcViewerRef, IfcViewerProps>(({ file, onCommandComplete }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -25,7 +31,9 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const meshesRef = useRef<THREE.Mesh[]>([]);
+  const originalMaterialsRef = useRef<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>(new Map());
+  const hiddenMeshesRef = useRef<Set<THREE.Mesh>>(new Set());
 
   // Function to load actual IFC geometry
   const loadGeometry = (geometryData: GeometryData[]) => {
@@ -72,9 +80,19 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
             };
 
             buildingGroup.add(mesh);
+            meshesRef.current.push(mesh);
+            originalMaterialsRef.current.set(mesh, material);
           }
         } catch (error) {
           console.warn(`Error processing element ${element.type}:`, error);
+        }
+      });
+
+      // Store all meshes for command processing
+      buildingGroup.traverse((child) => {
+        if (child instanceof THREE.Mesh && !meshesRef.current.includes(child)) {
+          meshesRef.current.push(child);
+          originalMaterialsRef.current.set(child, child.material);
         }
       });
 
@@ -150,6 +168,254 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
     console.log('Loaded fallback building');
   };
 
+  // Command execution logic
+  const executeCommand = async (command: ViewerCommand): Promise<boolean> => {
+    if (!sceneRef.current) return false;
+
+    try {
+      switch (command.type) {
+        case 'color':
+          return executeColorCommand(command);
+        case 'visibility':
+          return executeVisibilityCommand(command);
+        case 'highlight':
+          return executeHighlightCommand(command);
+        case 'isolate':
+          return executeIsolateCommand(command);
+        case 'reset':
+          return executeResetCommand(command);
+        case 'camera':
+          return executeCameraCommand(command);
+        case 'transparency':
+          return executeTransparencyCommand(command);
+        default:
+          return false;
+      }
+    } catch (error) {
+      console.error('Error executing viewer command:', error);
+      return false;
+    }
+  };
+
+  const executeColorCommand = (command: ViewerCommand & { type: 'color' }): boolean => {
+    const targetMeshes = findTargetMeshes(command.target);
+    if (targetMeshes.length === 0) return false;
+
+    const color = new THREE.Color(command.color);
+    targetMeshes.forEach(mesh => {
+      if (mesh.material instanceof THREE.Material) {
+        const newMaterial = (mesh.material as THREE.MeshLambertMaterial).clone();
+        newMaterial.color = color;
+        mesh.material = newMaterial;
+      }
+    });
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeVisibilityCommand = (command: ViewerCommand & { type: 'visibility' }): boolean => {
+    const targetMeshes = findTargetMeshes(command.target);
+    if (targetMeshes.length === 0) return false;
+
+    targetMeshes.forEach(mesh => {
+      mesh.visible = command.action === 'show';
+      if (command.action === 'hide') {
+        hiddenMeshesRef.current.add(mesh);
+      } else {
+        hiddenMeshesRef.current.delete(mesh);
+      }
+    });
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeHighlightCommand = (command: ViewerCommand & { type: 'highlight' }): boolean => {
+    const targetMeshes = findTargetMeshes(command.target);
+    if (targetMeshes.length === 0) return false;
+
+    // Reset all meshes first
+    meshesRef.current.forEach(mesh => {
+      const original = originalMaterialsRef.current.get(mesh);
+      if (original && mesh.material !== original) {
+        mesh.material = original;
+      }
+    });
+
+    // Highlight target meshes
+    const highlightColor = new THREE.Color(command.color || '#ffff00');
+    targetMeshes.forEach(mesh => {
+      if (mesh.material instanceof THREE.Material) {
+        const emissiveMaterial = new THREE.MeshLambertMaterial({
+          color: (mesh.material as THREE.MeshLambertMaterial).color,
+          emissive: highlightColor,
+          emissiveIntensity: 0.5,
+          side: THREE.DoubleSide
+        });
+        mesh.material = emissiveMaterial;
+      }
+    });
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeIsolateCommand = (command: ViewerCommand & { type: 'isolate' }): boolean => {
+    const targetMeshes = findTargetMeshes(command.target);
+    if (targetMeshes.length === 0) return false;
+
+    meshesRef.current.forEach(mesh => {
+      mesh.visible = targetMeshes.includes(mesh);
+    });
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeResetCommand = (command: ViewerCommand & { type: 'reset' }): boolean => {
+    if (!command.aspect || command.aspect === 'all' || command.aspect === 'color') {
+      meshesRef.current.forEach(mesh => {
+        const original = originalMaterialsRef.current.get(mesh);
+        if (original) {
+          mesh.material = original;
+        }
+      });
+    }
+
+    if (!command.aspect || command.aspect === 'all' || command.aspect === 'visibility') {
+      meshesRef.current.forEach(mesh => {
+        mesh.visible = true;
+      });
+      hiddenMeshesRef.current.clear();
+    }
+
+    if (!command.aspect || command.aspect === 'all' || command.aspect === 'camera') {
+      if (cameraRef.current && controlsRef.current) {
+        cameraRef.current.position.set(30, 30, 30);
+        controlsRef.current.target.set(0, 0, 0);
+        controlsRef.current.update();
+      }
+    }
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeCameraCommand = (command: ViewerCommand & { type: 'camera' }): boolean => {
+    if (!cameraRef.current || !controlsRef.current) return false;
+
+    const buildingBounds = new THREE.Box3();
+    meshesRef.current.forEach(mesh => {
+      if (mesh.visible) {
+        buildingBounds.expandByObject(mesh);
+      }
+    });
+
+    const center = buildingBounds.getCenter(new THREE.Vector3());
+    const size = buildingBounds.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    switch (command.action) {
+      case 'top':
+        cameraRef.current.position.set(center.x, center.y + maxDim * 2, center.z);
+        break;
+      case 'front':
+        cameraRef.current.position.set(center.x, center.y, center.z + maxDim * 2);
+        break;
+      case 'side':
+        cameraRef.current.position.set(center.x + maxDim * 2, center.y, center.z);
+        break;
+      case 'isometric':
+        cameraRef.current.position.set(
+          center.x + maxDim * 1.2,
+          center.y + maxDim * 0.8,
+          center.z + maxDim * 1.2
+        );
+        break;
+      case 'focus':
+        if (command.target) {
+          const targetMeshes = findTargetMeshes(command.target);
+          if (targetMeshes.length > 0) {
+            const targetBounds = new THREE.Box3();
+            targetMeshes.forEach(mesh => targetBounds.expandByObject(mesh));
+            center.copy(targetBounds.getCenter(new THREE.Vector3()));
+          }
+        }
+        break;
+    }
+
+    controlsRef.current.target.copy(center);
+    controlsRef.current.update();
+
+    if (rendererRef.current && sceneRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const executeTransparencyCommand = (command: ViewerCommand & { type: 'transparency' }): boolean => {
+    const targetMeshes = findTargetMeshes(command.target);
+    if (targetMeshes.length === 0) return false;
+
+    targetMeshes.forEach(mesh => {
+      if (mesh.material instanceof THREE.Material) {
+        const transparentMaterial = (mesh.material as THREE.MeshLambertMaterial).clone();
+        transparentMaterial.transparent = true;
+        transparentMaterial.opacity = command.opacity;
+        mesh.material = transparentMaterial;
+      }
+    });
+
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+    return true;
+  };
+
+  const findTargetMeshes = (target: any): THREE.Mesh[] => {
+    return meshesRef.current.filter(mesh => {
+      if (hiddenMeshesRef.current.has(mesh) && target.includeHidden !== true) {
+        return false;
+      }
+
+      const userData = mesh.userData;
+      
+      if (target.elementType && userData.type) {
+        const typeMatch = userData.type.toLowerCase().includes(target.elementType.toLowerCase());
+        if (!typeMatch) return false;
+      }
+
+      if (target.elementName && userData.name) {
+        const nameMatch = userData.name.toLowerCase().includes(target.elementName.toLowerCase());
+        if (!nameMatch) return false;
+      }
+
+      if (target.material && mesh.material instanceof THREE.Material) {
+        const materialName = (mesh.material as any).name || '';
+        const materialMatch = materialName.toLowerCase().includes(target.material.toLowerCase());
+        if (!materialMatch) return false;
+      }
+
+      return true;
+    });
+  };
+
+  // Expose commands via ref
+  useImperativeHandle(ref, () => ({
+    executeCommand
+  }));
+
   // Upload and process IFC file
   useEffect(() => {
     const uploadIFC = async () => {
@@ -158,11 +424,10 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
         formData.append('file', file);
         
         const response = await axios.post(
-          `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/upload_ifc`,
+          `${process.env.REACT_APP_API_URL || 'http://localhost:8001'}/upload_ifc`,
           formData
         );
         
-        setSessionId(response.data.session_id);
         console.log('IFC file uploaded successfully');
         console.log('Received geometry data:', response.data.geometry);
         
@@ -246,11 +511,14 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
     };
     window.addEventListener('resize', handleResize);
 
+    // Store container reference for cleanup
+    const container = containerRef.current;
+    
     // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
-      if (containerRef.current && renderer.domElement) {
-        containerRef.current.removeChild(renderer.domElement);
+      if (container && renderer.domElement && container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
       }
       renderer.dispose();
     };
@@ -297,6 +565,8 @@ const IfcViewer: React.FC<IfcViewerProps> = ({ file }) => {
       )}
     </Box>
   );
-};
+});
+
+IfcViewer.displayName = 'IfcViewer';
 
 export default IfcViewer;

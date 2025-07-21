@@ -117,6 +117,16 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    visual_command: dict = None
+
+
+class ProviderConfig(BaseModel):
+    provider: str  # "openai" or "anthropic"
+
+
+class ProviderStatus(BaseModel):
+    current_provider: str
+    available_providers: list[str]
 
 
 @app.on_event("startup")
@@ -131,23 +141,37 @@ async def shutdown_event():
 
 @app.post("/upload_ifc")
 async def upload_ifc(file: UploadFile = File(...)):
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if not file.filename.endswith('.ifc'):
         raise HTTPException(status_code=400, detail="Only IFC files are allowed")
     
     session_id = str(uuid.uuid4())
     file_path = UPLOAD_DIR / f"{session_id}_{file.filename}"
     
+    logger.info(f"Starting IFC upload process for file: {file.filename}")
+    logger.info(f"Session ID: {session_id}")
+    logger.info(f"File path: {file_path}")
+    
     async with aiofiles.open(file_path, 'wb') as f:
         content = await file.read()
         await f.write(content)
     
+    logger.info(f"File saved successfully, size: {len(content)} bytes")
+    
     try:
+        logger.info(f"Starting IFC parsing for session {session_id}")
         geometry_data = parse_ifc_to_neo4j(str(file_path), session_id, neo4j_service)
+        logger.info(f"IFC parsing completed successfully for session {session_id}")
         return {
             "session_id": session_id,
             "geometry": geometry_data
         }
     except Exception as e:
+        logger.error(f"IFC parsing failed for session {session_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to parse IFC file: {str(e)}")
 
 
@@ -171,6 +195,17 @@ async def get_geometry(session_id: str):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
+        # First check if it's a visual command
+        visual_command_result = await claude_service.parse_visual_command(request.question)
+        
+        if visual_command_result.get("has_command"):
+            # Return visual command with response
+            return ChatResponse(
+                response=visual_command_result.get("message", "ビジュアルコマンドを実行します"),
+                visual_command=visual_command_result.get("command")
+            )
+        
+        # If not a visual command, proceed with regular chat
         # Generate Cypher query
         cypher_query = await claude_service.generate_cypher(request.question, request.session_id)
         
@@ -184,7 +219,7 @@ async def chat(request: ChatRequest):
             request.conversation_history
         )
         
-        return ChatResponse(response=natural_response)
+        return ChatResponse(response=natural_response, visual_command=None)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
 
@@ -259,6 +294,25 @@ async def get_building_info(session_id: str):
             })
         info["all_elements"] = formatted_elements
         
+        # Count of materials
+        materials = neo4j_service.execute_query("""
+            MATCH (m:IfcMaterial) WHERE m.session_id = $session_id 
+            RETURN count(m) as count, collect(m.name) as names
+        """, {"session_id": session_id})
+        info["materials"] = materials[0] if materials else {"count": 0, "names": []}
+        
+        # Log material information for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Building info summary for session {session_id}:")
+        logger.info(f"  Floors: {info['floors'].get('count', 0)}")
+        logger.info(f"  Spaces: {info['spaces'].get('count', 0)}")
+        logger.info(f"  Doors: {info['doors'].get('count', 0)}")
+        logger.info(f"  Windows: {info['windows'].get('count', 0)}")
+        logger.info(f"  Materials: {info['materials'].get('count', 0)}")
+        if info['materials'].get('count', 0) > 0:
+            logger.info(f"  Material names: {info['materials'].get('names', [])[:5]}{'...' if len(info['materials'].get('names', [])) > 5 else ''}")
+        
         # Remove capabilities analysis (not needed in UI anymore)
         
         return {"session_id": session_id, "building_info": info}
@@ -270,3 +324,51 @@ async def get_building_info(session_id: str):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/llm-provider", response_model=ProviderStatus)
+async def get_llm_provider():
+    """Get current LLM provider and available options"""
+    global claude_service
+    
+    available = []
+    if os.getenv("OPENAI_API_KEY"):
+        available.append("openai")
+    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY"):
+        available.append("anthropic")
+    
+    current = "openai" if hasattr(claude_service, 'use_openai') and claude_service.use_openai else "anthropic"
+    
+    return ProviderStatus(
+        current_provider=current,
+        available_providers=available
+    )
+
+
+@app.post("/llm-provider")
+async def set_llm_provider(config: ProviderConfig):
+    """Switch LLM provider"""
+    global claude_service
+    
+    # Validate provider
+    if config.provider not in ["openai", "anthropic"]:
+        raise HTTPException(status_code=400, detail="Invalid provider. Must be 'openai' or 'anthropic'")
+    
+    # Check if API key exists for the provider
+    if config.provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=400, detail="OpenAI API key not configured")
+    
+    if config.provider == "anthropic" and not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")):
+        raise HTTPException(status_code=400, detail="Anthropic API key not configured")
+    
+    # Force recreation of ClaudeService with the selected provider
+    try:
+        if config.provider == "openai":
+            os.environ["_FORCE_OPENAI"] = "true"
+        else:
+            os.environ.pop("_FORCE_OPENAI", None)
+        
+        claude_service = ClaudeService()
+        return {"status": "success", "provider": config.provider}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to switch provider: {str(e)}")

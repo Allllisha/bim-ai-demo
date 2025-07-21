@@ -6,7 +6,6 @@ import {
   Typography,
   Grid,
   Chip,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -47,6 +46,10 @@ interface BuildingData {
     labels: string[];
     count: number;
   }>;
+  materials: {
+    count: number;
+    names: string[];
+  };
   capabilities: {
     available_questions: string[];
     limitations: string[];
@@ -102,7 +105,7 @@ const BuildingInfo: React.FC<BuildingInfoProps> = ({ sessionId }) => {
     const fetchBuildingInfo = async () => {
       try {
         const response = await axios.get(
-          `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/building-info/${sessionId}`
+          `${process.env.REACT_APP_API_URL || 'http://localhost:8001'}/building-info/${sessionId}`
         );
         setBuildingData(response.data.building_info);
       } catch (error) {
@@ -257,6 +260,16 @@ const BuildingInfo: React.FC<BuildingInfoProps> = ({ sessionId }) => {
                     </Typography>
                   </Box>
                 </Grid>
+                <Grid item xs={6} sm={3}>
+                  <Box sx={{ textAlign: 'center' }}>
+                    <Typography variant="h4" sx={{ fontWeight: 300, color: 'primary.main', mb: 0.5 }}>
+                      {buildingData.materials?.count || 0}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', textTransform: 'uppercase' }}>
+                      Materials
+                    </Typography>
+                  </Box>
+                </Grid>
               </Grid>
             </CardContent>
           </Card>
@@ -288,6 +301,32 @@ const BuildingInfo: React.FC<BuildingInfoProps> = ({ sessionId }) => {
             </CardContent>
           </Card>
         </Grid>
+
+        {/* 材質一覧 */}
+        {buildingData.materials && buildingData.materials.count > 0 && (
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" color="primary" gutterBottom>
+                  材質一覧 ({buildingData.materials.count}種類)
+                </Typography>
+                <List dense sx={{ maxHeight: 300, overflow: 'auto' }}>
+                  {buildingData.materials.names.map((materialName, index) => (
+                    <ListItem key={index} sx={{ py: 0.5 }}>
+                      <ListItemText
+                        primary={
+                          <Typography variant="body2">
+                            {materialName || `Material ${index + 1}`}
+                          </Typography>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
 
       </Grid>
       </Box>

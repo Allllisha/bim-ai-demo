@@ -3,21 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.18.0",
+    "@mui/material": "^5.15.3",
+    "@types/three": "^0.147.0",
+    "ajv": "^8.12.0",
+    "ajv-keywords": "^5.1.0",
+    "axios": "^1.6.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
+    "three": "^0.147.0",
     "typescript": "^4.9.5",
     "web-ifc": "^0.0.44",
-    "web-ifc-three": "^0.0.122",
-    "three": "^0.147.0",
-    "@types/three": "^0.147.0",
-    "axios": "^1.6.5",
-    "@emotion/react": "^11.11.3",
-    "@emotion/styled": "^11.11.0",
-    "@mui/material": "^5.15.3",
-    "@mui/icons-material": "^5.15.3",
-    "ajv": "^8.12.0",
-    "ajv-keywords": "^5.1.0"
+    "web-ifc-three": "^0.0.122"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -44,8 +44,8 @@
     ]
   },
   "devDependencies": {
+    "@types/node": "^20.10.6",
     "@types/react": "^18.2.47",
-    "@types/react-dom": "^18.2.18",
-    "@types/node": "^20.10.6"
+    "@types/react-dom": "^18.2.18"
   }
 }

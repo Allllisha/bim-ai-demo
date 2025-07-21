@@ -1,6 +1,5 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { 
-  Grid, 
   Paper, 
   AppBar, 
   Toolbar, 
@@ -9,12 +8,16 @@ import {
   Tabs,
   Tab,
   ThemeProvider,
-  CssBaseline
+  CssBaseline,
+  IconButton
 } from '@mui/material';
+import SettingsIcon from '@mui/icons-material/Settings';
 import FileUpload from './components/FileUpload';
-import IfcViewer from './components/IfcViewer';
+import IfcViewer, { IfcViewerRef } from './components/IfcViewer';
 import ChatInterface from './components/ChatInterface';
 import BuildingInfo from './components/BuildingInfo';
+import ResizablePanels from './components/ResizablePanels';
+import SettingsDialog from './components/SettingsDialog';
 import architecturalTheme from './theme';
 import './App.css';
 
@@ -29,12 +32,22 @@ function App() {
     ifcFile: null
   });
   const [tabValue, setTabValue] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const viewerRef = useRef<IfcViewerRef>(null);
 
   const handleFileUpload = useCallback((sessionId: string, file: File) => {
     setState({
       sessionId,
       ifcFile: file
     });
+  }, []);
+
+  const handleViewerCommand = useCallback(async (command: any) => {
+    if (viewerRef.current) {
+      const success = await viewerRef.current.executeCommand(command);
+      return success;
+    }
+    return false;
   }, []);
 
   return (
@@ -85,11 +98,23 @@ function App() {
               sx={{ 
                 color: 'text.secondary',
                 fontSize: '0.8rem',
-                letterSpacing: '0.05em'
+                letterSpacing: '0.05em',
+                mr: 2
               }}
             >
               Powered by AICE
             </Typography>
+            <IconButton
+              onClick={() => setSettingsOpen(true)}
+              sx={{ 
+                color: 'text.secondary',
+                '&:hover': {
+                  color: 'primary.main'
+                }
+              }}
+            >
+              <SettingsIcon />
+            </IconButton>
           </Toolbar>
         </AppBar>
         
@@ -188,10 +213,12 @@ function App() {
               </Box>
             </Box>
           ) : (
-            /* Analysis State - Side by Side Layout */
-            <Grid container sx={{ height: '100%' }}>
-              {/* 3D Viewer */}
-              <Grid item xs={12} md={8} sx={{ height: '100%' }}>
+            /* Analysis State - Resizable Side by Side Layout */
+            <ResizablePanels
+              initialLeftWidth={70}
+              minLeftWidth={40}
+              maxLeftWidth={80}
+              leftPanel={
                 <Paper 
                   elevation={0}
                   sx={{ 
@@ -202,12 +229,10 @@ function App() {
                     bgcolor: 'background.paper'
                   }}
                 >
-                  <IfcViewer file={state.ifcFile!} />
+                  <IfcViewer ref={viewerRef} file={state.ifcFile!} />
                 </Paper>
-              </Grid>
-              
-              {/* Analysis Panel */}
-              <Grid item xs={12} md={4} sx={{ height: '100%' }}>
+              }
+              rightPanel={
                 <Paper 
                   elevation={0}
                   sx={{ 
@@ -255,15 +280,24 @@ function App() {
                       height: '100%',
                       display: tabValue === 1 ? 'block' : 'none'
                     }}>
-                      <ChatInterface sessionId={state.sessionId} />
+                      <ChatInterface 
+                        sessionId={state.sessionId} 
+                        onViewerCommand={handleViewerCommand}
+                      />
                     </Box>
                   </Box>
                 </Paper>
-              </Grid>
-            </Grid>
+              }
+            />
           )}
         </Box>
       </Box>
+      
+      {/* Settings Dialog */}
+      <SettingsDialog 
+        open={settingsOpen} 
+        onClose={() => setSettingsOpen(false)} 
+      />
     </ThemeProvider>
   );
 }
